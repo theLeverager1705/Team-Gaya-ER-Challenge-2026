@@ -13,7 +13,9 @@ features, and stage 2 adds 12 *group-context* features describing the entity's o
 candidates. A decision rule chosen for macro F0.5 turns the scores into match lists. On
 30,057 training entities never used for fitting or rule selection, the final model scores
 **macro F0.5 = 0.9264** (pair precision 0.980, pair recall 0.854), against 0.9160 without stage 2.
-The full test set (1.73M × 10.0M records) runs on one laptop.
+Candidate generation ends with a learned pre-filter, so the final model scores only **3.8 candidates
+per Source 1 entity** on the test set (6.65M pairs out of the 1.7·10¹³ possible), at no measurable loss
+(report-split macro F0.5 0.9263). The full test set runs on one laptop.
 
 ---
 
@@ -49,13 +51,26 @@ because the true matches of one business resemble each other.
 - **Blocking keys used:** core-name tokens, core-name bigrams, address tokens (numbers included),
   and address bigrams, hashed to 2²⁴ buckets. Keys occurring in more than 1,000 Source 2/3 records
   are dropped as non-discriminative.
-- **Scoring:** score = Σ IDF of shared keys, computed inside each country partition. Partitions are
-  whatever labels occur (an open set), so France needs no special handling. The top 30 candidates
-  per entity are kept.
-- **Candidate pairs generated:** 51.9M for the test set (30.0 per entity; 29 entities with none).
-- **How true matches were kept:** recall was measured against ground truth at full corpus scale
-  (20k entities): 79.2% of true pairs in the top 5, 90.4% @20, **91.5% @30**, 93.0% @60. K = 30 is
-  the knee of that curve. On the 300k-entity training sample, recall @30 is 91.4%.
+- **Step 1, retrieval:** score = Σ IDF of shared keys, computed inside each country partition.
+  Partitions are whatever labels occur (an open set), so France needs no special handling. The top 30
+  records per entity are retrieved (51.9M pairs for the test set).
+- **Step 2, learned pre-filter:** the stage-1 LightGBM (26 pair features, see §4) scores the 30
+  retrieved pairs, and only pairs with p1 ≥ 0.1 stay candidates. The cutoff is the largest value in
+  {0, 0.001, …, 0.1} whose tune-split macro F0.5 is within 0.0001 of using no cutoff. The final model
+  (stage 2) runs inference **only on these candidates**, and they are exactly `candidate_pairs.tsv`.
+  To be transparent: the stage-1 model does score all 30 retrieved pairs; the stage-2 group features
+  summarize those stage-1 scores.
+- **Candidate pairs generated (test):** 6,652,763, i.e. **3.84 per entity**, versus 1.7·10¹³ possible
+  pairs, a reduction of more than 99.99999%. 56,812 entities have no candidate and are predicted singletons.
+- **How true matches were kept:** recall was measured against ground truth at full corpus scale.
+  Retrieval keeps 79.2% of true pairs in the top 5, 90.4% @20, **91.5% @30**, 93.0% @60 (20k
+  entities); K = 30 is the knee. The pre-filter trade-off on held-out entities (report split):
+
+  | p1 cutoff | candidates / entity | recall ceiling | macro F0.5 |
+  |---|---|---|---|
+  | none | 29.95 | 91.37% | 0.9264 |
+  | 0.01 | 4.31 | 91.22% | 0.9264 |
+  | **0.1 (chosen on tune split)** | **3.63** | **90.42%** | **0.9263** |
 
 ---
 
@@ -93,7 +108,8 @@ singletons included), and the best (stage, rule) pair is chosen there:
   1.25·Σ_{i≤j} p_i / (j + 0.25·(Σ_i p_i + c)), or nothing when s·Π(1 − p_i), an estimate that the
   entity is a singleton, is larger.
 
-Chosen (highest tune score): stage 2 + threshold rule, t_all = 0.725, t_top = 0.56.
+Chosen (highest tune score): stage 2 + threshold rule, t_all = 0.725, t_top = 0.56, applied
+to the pre-filtered candidates.
 
 ---
 
@@ -111,6 +127,10 @@ Macro F0.5 on the tune split (~30k entities, used for selection) and the untouch
 
 v1 (stage 1 only, 200k training entities) scored 0.9165 on its report split. The group-context
 stage adds about one point. The two decision rules tie once probabilities are this good.
+
+**Public leaderboard:** v2 scored **0.902**. That is below the held-out 0.926, which is expected: the test
+set is 15% France, a country absent from training, and 47% India, the harder training country (0.895
+held-out, versus 0.947 for the US).
 
 - **Where the loss comes from (report split):** pair precision is 0.980 and pair recall 0.854. Of
   103,940 true pairs, 8,965 (8.6%) never reach the top-30 candidates and 6,266 (6.0%) are

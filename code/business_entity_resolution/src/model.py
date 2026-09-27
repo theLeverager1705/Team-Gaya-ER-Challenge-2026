@@ -43,6 +43,31 @@ def apply_decision(rule: dict, entity, prob) -> np.ndarray:
     return decide(prob, top_candidate_mask(entity, prob), rule["t_all"], rule["t_top"])
 
 
+PREFILTER_GRID = (0.0, 0.001, 0.003, 0.01, 0.02, 0.05, 0.1)
+
+
+def prefilter_table(entity, p1, p2, label, n_true, rule):
+    """For each stage-1 cutoff: (cutoff, candidates per entity, recall ceiling, macro F0.5)
+    when pairs below the cutoff leave the candidate set and the final model never scores them."""
+    out = []
+    for tau in PREFILTER_GRID:
+        keep = p1 >= tau
+        pred = np.zeros(len(p1), dtype=bool)
+        if keep.any():
+            pred[keep] = apply_decision(rule, entity[keep], p2[keep])
+        out.append({"p1_cutoff": tau, "candidates_per_entity": round(float(keep.sum() / len(n_true)), 3),
+                    "recall_ceiling": round(float(label[keep].sum() / max(n_true.sum(), 1)), 4),
+                    "macro_f05": round(macro_f05(entity, pred, label, n_true), 4)})
+    return out
+
+
+def choose_prefilter(tune_table, tolerance: float = 0.0001) -> float:
+    """Largest cutoff whose tune-split macro F0.5 is within `tolerance` of using no cutoff,
+    i.e. the smallest candidate set that costs no measurable accuracy."""
+    base = tune_table[0]["macro_f05"]
+    return max(r["p1_cutoff"] for r in tune_table if r["macro_f05"] >= base - tolerance)
+
+
 def top_candidate_mask(entity: np.ndarray, prob: np.ndarray) -> np.ndarray:
     """True for each entity's single highest-probability candidate pair."""
     order = np.lexsort((-prob, entity))

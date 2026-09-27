@@ -137,7 +137,97 @@
       "tune": 0.9269,
       "report": 0.9264
     },
-    "singleton_rate": 0.05552
+    "singleton_rate": 0.05552,
+    "prefilter": {
+      "tune": [
+        {
+          "p1_cutoff": 0.0,
+          "candidates_per_entity": 29.966,
+          "recall_ceiling": 0.9139,
+          "macro_f05": 0.9269
+        },
+        {
+          "p1_cutoff": 0.001,
+          "candidates_per_entity": 5.512,
+          "recall_ceiling": 0.9136,
+          "macro_f05": 0.9269
+        },
+        {
+          "p1_cutoff": 0.003,
+          "candidates_per_entity": 4.888,
+          "recall_ceiling": 0.9133,
+          "macro_f05": 0.9269
+        },
+        {
+          "p1_cutoff": 0.01,
+          "candidates_per_entity": 4.317,
+          "recall_ceiling": 0.9124,
+          "macro_f05": 0.9269
+        },
+        {
+          "p1_cutoff": 0.02,
+          "candidates_per_entity": 4.049,
+          "recall_ceiling": 0.9112,
+          "macro_f05": 0.9269
+        },
+        {
+          "p1_cutoff": 0.05,
+          "candidates_per_entity": 3.792,
+          "recall_ceiling": 0.9085,
+          "macro_f05": 0.9269
+        },
+        {
+          "p1_cutoff": 0.1,
+          "candidates_per_entity": 3.621,
+          "recall_ceiling": 0.9043,
+          "macro_f05": 0.9268
+        }
+      ],
+      "report": [
+        {
+          "p1_cutoff": 0.0,
+          "candidates_per_entity": 29.951,
+          "recall_ceiling": 0.9137,
+          "macro_f05": 0.9264
+        },
+        {
+          "p1_cutoff": 0.001,
+          "candidates_per_entity": 5.487,
+          "recall_ceiling": 0.9135,
+          "macro_f05": 0.9264
+        },
+        {
+          "p1_cutoff": 0.003,
+          "candidates_per_entity": 4.868,
+          "recall_ceiling": 0.9132,
+          "macro_f05": 0.9264
+        },
+        {
+          "p1_cutoff": 0.01,
+          "candidates_per_entity": 4.312,
+          "recall_ceiling": 0.9122,
+          "macro_f05": 0.9264
+        },
+        {
+          "p1_cutoff": 0.02,
+          "candidates_per_entity": 4.054,
+          "recall_ceiling": 0.9111,
+          "macro_f05": 0.9264
+        },
+        {
+          "p1_cutoff": 0.05,
+          "candidates_per_entity": 3.801,
+          "recall_ceiling": 0.9085,
+          "macro_f05": 0.9263
+        },
+        {
+          "p1_cutoff": 0.1,
+          "candidates_per_entity": 3.626,
+          "recall_ceiling": 0.9042,
+          "macro_f05": 0.9263
+        }
+      ]
+    }
   },
   "stage1_rounds": 1067,
   "stage2_rounds": 571,
@@ -212,5 +302,6 @@
     }
   },
   "n_train_entities": 300000,
-  "seed": 42
+  "seed": 42,
+  "prefilter_p1": 0.1
 }

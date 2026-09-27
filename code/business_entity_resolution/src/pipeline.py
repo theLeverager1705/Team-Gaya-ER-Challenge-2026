@@ -22,7 +22,8 @@ import pandas as pd
 
 from blocking import CandidateGenerator
 from features import FEATURE_COLUMNS, STAGE2_COLUMNS, add_group_features, compute_features
-from model import apply_decision, macro_f05, train_model, tune_expected_f, tune_thresholds
+from model import (apply_decision, choose_prefilter, macro_f05, prefilter_table, train_model,
+                   tune_expected_f, tune_thresholds)
 from text import load_source, prepare_records
 
 PKG_DIR = Path(__file__).resolve().parents[1]
@@ -227,7 +228,81 @@ def train(data_dir=DEFAULT_DATA_DIR, model_dir=DEFAULT_MODEL_DIR, n_entities: in
     m2.save_model(str(model_dir / "model_stage2.txt"), num_iteration=m2.best_iteration)
     (model_dir / "config.json").write_text(json.dumps(config, indent=2))
     _log(f"Saved models to {model_dir}")
+    return select_prefilter(model_dir)
+
+
+def select_prefilter(model_dir=DEFAULT_MODEL_DIR) -> dict:
+    """Choose the stage-1 pre-filter cutoff on the tune split (from the held-out scores saved by
+    train) and store it in config.json. Candidate generation is then two steps: IDF top-30
+    retrieval, then the stage-1 model keeps pairs with p1 >= cutoff; only those pairs reach the
+    final (stage-2) model and candidate_pairs.tsv."""
+    model_dir = Path(model_dir)
+    config = json.loads((model_dir / "config.json").read_text())
+    if not config["use_stage2"]:
+        config["prefilter_p1"] = 0.0
+    else:
+        z = np.load(ARTIFACT_DIR / "train_heldout_scores.npz")
+        tables = {}
+        for name, r in (("tune", 1), ("report", 2)):
+            ent = np.flatnonzero(z["entity_role"] == r)
+            code = np.full(len(z["entity_role"]), -1, dtype=np.int64)
+            code[ent] = np.arange(len(ent))
+            m = z["role"] == r
+            tables[name] = prefilter_table(code[z["s1_row"][m]], z["p1"][m], z["p2"][m], z["label"][m],
+                                           z["n_true"][ent], config["decision"])
+        config["prefilter_p1"] = choose_prefilter(tables["tune"])
+        config["metrics"]["prefilter"] = tables
+    (model_dir / "config.json").write_text(json.dumps(config, indent=2))
+    _log(f"Pre-filter p1 >= {config['prefilter_p1']}")
     return config
+
+
+def _decide_and_write(config, output_dir, s1_ids, c_ids, rows, p1, p2) -> dict:
+    """Apply the stage-1 pre-filter and the decision rule, then write both output files.
+    candidate_pairs.tsv = exactly the pairs the final model scores; matches are a subset."""
+    cutoff = config.get("prefilter_p1", 0.0) if config["use_stage2"] else 0.0
+    keep = p1 >= cutoff
+    prob = p2 if config["use_stage2"] else p1
+    matched = np.zeros(len(p1), dtype=bool)
+    matched[keep] = apply_decision(config["decision"], rows[keep], prob[keep])
+
+    cand_path = Path(output_dir) / "candidate_pairs.tsv"
+    match_path = Path(output_dir) / "matching_results.tsv"
+    _write_id_lists(cand_path, s1_ids, rows[keep], c_ids[keep], "candidate_entity_ids")
+    _write_id_lists(match_path, s1_ids, rows[matched], c_ids[matched], "matched_entity_ids")
+
+    n_with = len(np.unique(rows[matched]))
+    stats = {
+        "entities": int(len(s1_ids)),
+        "retrieved_pairs": int(len(rows)),
+        "candidate_pairs": int(keep.sum()),
+        "candidates_per_entity": round(float(keep.sum() / len(s1_ids)), 2),
+        "matched_pairs": int(matched.sum()),
+        "entities_with_matches": int(n_with),
+        "entities_predicted_singleton": int(len(s1_ids) - n_with),
+    }
+    _log(f"Wrote {match_path} and {cand_path}: {stats}")
+    return stats
+
+
+def _read_ids(path) -> np.ndarray:
+    """entity_id column of a source file, in file order (same order load_source uses)."""
+    return pd.read_csv(path, sep="\t", usecols=["entity_id"], dtype=str, keep_default_na=False,
+                       quoting=3)["entity_id"].to_numpy()
+
+
+def finalize(data_dir=DEFAULT_DATA_DIR, model_dir=DEFAULT_MODEL_DIR, output_dir=DEFAULT_OUTPUT_DIR,
+             split: str = "test") -> dict:
+    """Rewrite both outputs from the scores saved by predict (artifacts/<split>_scores.npz)
+    using the current config (pre-filter + decision rule), without re-running blocking or models."""
+    split_dir = Path(data_dir) / split
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    config = json.loads((Path(model_dir) / "config.json").read_text())
+    z = np.load(ARTIFACT_DIR / f"{split}_scores.npz")
+    s1_ids = _read_ids(split_dir / f"{split}_source1.tsv")
+    s23_ids = np.concatenate([_read_ids(split_dir / f"{split}_source2.tsv"),
+                              _read_ids(split_dir / f"{split}_source3.tsv")])
+    return _decide_and_write(config, output_dir, s1_ids, s23_ids[z["c_row"]], z["s1_row"], z["p1"], z["p2"])
 
 
 def _write_id_lists(path, s1_ids, rows, cand_ids, column):
@@ -271,6 +346,7 @@ def predict(data_dir=DEFAULT_DATA_DIR, model_dir=DEFAULT_MODEL_DIR, output_dir=D
     _log("Scoring candidates...")
     t0 = time.time()
     rows = pairs["s1_row"].to_numpy()
+    cutoff = config.get("prefilter_p1", 0.0)
     p1 = np.empty(len(pairs), dtype=np.float32)
     p2 = np.full(len(pairs), np.nan, dtype=np.float32)
     for a, b in _entity_chunks(rows, FEATURE_CHUNK_PAIRS):
@@ -278,34 +354,22 @@ def predict(data_dir=DEFAULT_DATA_DIR, model_dir=DEFAULT_MODEL_DIR, output_dir=D
         X = compute_features(chunk, s1, s23)
         p1[a:b] = m1.predict(X[config["stage1_features"]].to_numpy(np.float32))
         if m2 is not None:
+            # group features use every retrieved pair's p1; the final model only scores
+            # the pre-filtered candidates
             X2 = add_group_features(X, chunk, p1[a:b], s23)
-            p2[a:b] = m2.predict(X2[config["stage2_features"]].to_numpy(np.float32))
+            keep = p1[a:b] >= cutoff
+            if keep.any():
+                q = np.full(b - a, np.nan, dtype=np.float32)
+                q[keep] = m2.predict(X2[config["stage2_features"]].to_numpy(np.float32)[keep])
+                p2[a:b] = q
         del X
         _log(f"  scored {b:,}/{len(pairs):,} pairs")
     _log(f"  done in {time.time() - t0:.0f}s")
 
-    prob = p2 if m2 is not None else p1
-    matched = apply_decision(config["decision"], rows, prob)
-
-    # Saved so a different decision rule can be applied without re-scoring.
+    # Saved so the pre-filter or decision rule can be re-applied without re-scoring (finalize).
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     np.savez(ARTIFACT_DIR / f"{split}{'_holdout' if holdout_only else ''}_scores.npz",
              s1_row=rows, c_row=pairs["c_row"].to_numpy(), p1=p1, p2=p2)
 
-    s1_ids = s1["entity_id"].to_numpy()
     c_ids = s23["entity_id"].to_numpy()[pairs["c_row"].to_numpy()]
-    cand_path = output_dir / "candidate_pairs.tsv"
-    match_path = output_dir / "matching_results.tsv"
-    _write_id_lists(cand_path, s1_ids, rows, c_ids, "candidate_entity_ids")
-    _write_id_lists(match_path, s1_ids, rows[matched], c_ids[matched], "matched_entity_ids")
-
-    n_with = len(np.unique(rows[matched]))
-    stats = {
-        "entities": int(len(s1)),
-        "candidate_pairs": int(len(pairs)),
-        "matched_pairs": int(matched.sum()),
-        "entities_with_matches": int(n_with),
-        "entities_predicted_singleton": int(len(s1) - n_with),
-    }
-    _log(f"Wrote {match_path} and {cand_path}: {stats}")
-    return stats
+    return _decide_and_write(config, output_dir, s1["entity_id"].to_numpy(), c_ids, rows, p1, p2)

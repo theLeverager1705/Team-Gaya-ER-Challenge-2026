@@ -21,7 +21,8 @@ if hasattr(sys.stdout, "reconfigure"):
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from evaluate import score_files  # noqa: E402
-from pipeline import DEFAULT_DATA_DIR, DEFAULT_MODEL_DIR, DEFAULT_OUTPUT_DIR, predict, train  # noqa: E402
+from pipeline import (DEFAULT_DATA_DIR, DEFAULT_MODEL_DIR, DEFAULT_OUTPUT_DIR,  # noqa: E402
+                      finalize, predict, select_prefilter, train)
 
 
 def main():
@@ -48,12 +49,26 @@ def main():
     p_score.add_argument("--matching", required=True)
     p_score.add_argument("--ground-truth", required=True)
 
+    p_pre = sub.add_parser("prefilter", help="re-select the stage-1 pre-filter cutoff (runs at the end of train)")
+    p_pre.add_argument("--model-dir", default=str(DEFAULT_MODEL_DIR))
+
+    p_fin = sub.add_parser("finalize", help="rewrite outputs from saved scores with the current config")
+    p_fin.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR))
+    p_fin.add_argument("--model-dir", default=str(DEFAULT_MODEL_DIR))
+    p_fin.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
+    p_fin.add_argument("--split", default="test", choices=["test", "train"])
+
     args = parser.parse_args()
     if args.command == "train":
         result = train(args.data_dir, args.model_dir, args.n_entities, args.seed)
         print(json.dumps(result["metrics"], indent=2))
     elif args.command == "predict":
         predict(args.data_dir, args.model_dir, args.output_dir, args.split, args.holdout_only)
+    elif args.command == "prefilter":
+        result = select_prefilter(args.model_dir)
+        print(json.dumps(result["metrics"]["prefilter"], indent=2))
+    elif args.command == "finalize":
+        finalize(args.data_dir, args.model_dir, args.output_dir, args.split)
     else:
         print(json.dumps(score_files(args.matching, args.ground_truth), indent=2))
 

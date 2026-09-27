@@ -4,10 +4,11 @@ For every Source 1 business, find all Source 2 / Source 3 records describing the
 real-world business. Pipeline:
 
 ```
-normalize -> blocking (IDF-weighted rare keys, top-30 per entity, per country)
+normalize -> retrieval (IDF-weighted rare keys, top-30 per entity, per country)
           -> 26 pair features -> stage-1 LightGBM
-          -> 12 group-context features -> stage-2 LightGBM
-          -> decision rule tuned for macro F0.5 -> matching_results.tsv
+          -> learned pre-filter: keep p1 >= 0.1        => candidate_pairs.tsv (3.84 per entity on test)
+          -> 12 group-context features -> stage-2 LightGBM (scores only those candidates)
+          -> decision rule tuned for macro F0.5       => matching_results.tsv
 ```
 
 ## Results (training entities never used for fitting or rule selection)
@@ -16,6 +17,9 @@ normalize -> blocking (IDF-weighted rare keys, top-30 per entity, per country)
 |---|---|---|
 | v1 | stage-1 LightGBM + two-threshold rule | 0.9165 (200k-entity sample) |
 | v2 | + stage-2 group-context model, rule chosen by tuning split | **0.9264** (300k-entity sample; stage 1 alone 0.9160) |
+| v3 | v2 + stage-1 pre-filter p1 ≥ 0.1 (30 → 3.6 candidates per entity) | 0.9263 |
+
+Public leaderboard (test set, includes France, which is unseen in training): v2 scored 0.902.
 
 v2 report split (30,057 entities): pair precision 0.980, pair recall 0.854; US 0.9469, India 0.8950.
 Blocking keeps 91.4% of true pairs among the top 30 candidates, which is the recall ceiling.
@@ -42,7 +46,12 @@ relative to this folder, so commands work from any working directory).
 python src/main.py train
 
 # 2. Predict the test set -> <repo root>/output/matching_results.tsv, candidate_pairs.tsv
+#    (also saves all scores to <repo root>/artifacts/test_scores.npz)
 python src/main.py predict
+
+# Optional: re-apply a changed pre-filter / decision rule to the saved scores, no re-scoring
+python src/main.py prefilter     # re-select the cutoff on the tune split (train runs this)
+python src/main.py finalize      # rewrite both outputs from artifacts/test_scores.npz
 
 # 3. Official format check
 python utils/validate_submission.py -m ../../output/matching_results.tsv \
