@@ -14,6 +14,7 @@ address is then the only shared signal.
 
 Countries are an open set: partitions are whatever labels appear in Source 1.
 """
+import gc
 import time
 
 import numpy as np
@@ -48,7 +49,7 @@ def _topk_per_row(C: sp.csr_matrix, k: int):
 class CandidateGenerator:
     """Retrieves the top_k Source 2/3 records per Source 1 entity by shared-rare-key IDF score."""
 
-    def __init__(self, top_k: int = 30, df_cap: int = 1000, chunk_size: int = 20000,
+    def __init__(self, top_k: int = 30, df_cap: int = 1000, chunk_size: int = 5000,
                  verbose: bool = True):
         self.top_k = top_k
         self.df_cap = df_cap
@@ -104,16 +105,20 @@ class CandidateGenerator:
                 rows, cols, score, rank = _topk_per_row(C, self.top_k)
                 name_score = np.asarray(Cn[rows, cols]).ravel().astype(np.float32)
                 parts.append(pd.DataFrame({
-                    "s1_row": s1_idx[start + rows],
-                    "c_row": s23_idx[cols],
+                    "s1_row": s1_idx[start + rows].astype(np.int32),
+                    "c_row": s23_idx[cols].astype(np.int32),
                     "blk_score": score.astype(np.float32),
                     "blk_name": name_score,
                     "blk_addr": (score - name_score).astype(np.float32),
                     "blk_rank": rank.astype(np.int16),
                 }))
                 n_pairs += len(rows)
+                del Cn, C
             if self.verbose:
-                print(f"  [{country}] {n_pairs:,} candidate pairs in {time.time() - t0:.0f}s")
+                print(f"  [{country}] {n_pairs:,} candidate pairs in {time.time() - t0:.0f}s", flush=True)
+            # free this country's index before the next one is built (peak memory)
+            del BnT, BaT, An, Aa
+            gc.collect()
 
         if not parts:
             return pd.DataFrame(columns=["s1_row", "c_row", "blk_score", "blk_name",

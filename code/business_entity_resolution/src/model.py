@@ -36,6 +36,13 @@ def train_model(X_tr, y_tr, X_va, y_va, max_rounds: int = 1500) -> lgb.Booster:
                      callbacks=[lgb.early_stopping(50, verbose=False), lgb.log_evaluation(100)])
 
 
+def apply_decision(rule: dict, entity, prob) -> np.ndarray:
+    """Match mask for candidate pairs under a saved decision rule (see config.json)."""
+    if rule["type"] == "expected_f":
+        return decide_expected_f(entity, prob, rule["c_missing"], rule["s_empty"])
+    return decide(prob, top_candidate_mask(entity, prob), rule["t_all"], rule["t_top"])
+
+
 def top_candidate_mask(entity: np.ndarray, prob: np.ndarray) -> np.ndarray:
     """True for each entity's single highest-probability candidate pair."""
     order = np.lexsort((-prob, entity))
@@ -70,4 +77,49 @@ def tune_thresholds(entity, prob, label, n_true):
             s = macro_f05(entity, decide(prob, is_top, t_all, t_top), label, n_true)
             if s > best_score:
                 best_score, best = s, (float(t_all), float(t_top))
+    return best, best_score
+
+
+def decide_expected_f(entity, prob, c_missing: float, s_empty: float) -> np.ndarray:
+    """Per-entity rule: predict the top-j candidates (by probability) for the j
+    that maximizes a plug-in estimate of that entity's expected F_0.5:
+        EF(j) = 1.25 * sum_{i<=j} p_i / (j + 0.25 * (sum_i p_i + c_missing)),
+    where c_missing is the expected number of true matches blocking never
+    retrieved. Predict nothing when s_empty * prod_i(1 - p_i), an estimate of
+    P(entity is a singleton), beats the best EF(j)."""
+    entity = np.asarray(entity)
+    order = np.lexsort((-prob, entity))
+    e = entity[order]
+    p = np.clip(np.asarray(prob, dtype=np.float64)[order], 0.0, 1.0 - 1e-7)
+    n = len(p)
+    first = np.ones(n, dtype=bool)
+    first[1:] = e[1:] != e[:-1]
+    starts = np.flatnonzero(first)
+    gid = np.cumsum(first) - 1
+
+    cs = np.cumsum(p)
+    before = np.r_[0.0, cs[starts[1:] - 1]]
+    S = cs - before[gid]
+    j = (np.arange(n) - starts[gid] + 1).astype(np.float64)
+    T = np.add.reduceat(p, starts)[gid] + c_missing
+    ef = 1.25 * S / (j + 0.25 * T)
+
+    best = np.maximum.reduceat(ef, starts)
+    j_star = np.minimum.reduceat(np.where(ef >= best[gid] - 1e-12, j, np.inf), starts)
+    ef_empty = s_empty * np.exp(np.add.reduceat(np.log1p(-p), starts))
+    keep_sorted = (j <= j_star[gid]) & (best > ef_empty)[gid]
+
+    keep = np.empty(n, dtype=bool)
+    keep[order] = keep_sorted
+    return keep
+
+
+def tune_expected_f(entity, prob, label, n_true):
+    """Grid-search (c_missing, s_empty) for decide_expected_f; returns ((c, s), score)."""
+    best_score, best = -1.0, (0.0, 1.0)
+    for c in (0.0, 0.1, 0.2, 0.3, 0.45, 0.6, 0.8, 1.0):
+        for s in np.round(np.arange(0.1, 1.01, 0.1), 2):
+            score = macro_f05(entity, decide_expected_f(entity, prob, c, s), label, n_true)
+            if score > best_score:
+                best_score, best = score, (float(c), float(s))
     return best, best_score

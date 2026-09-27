@@ -2,12 +2,15 @@
 End-to-end pipeline.
 
   train:   blocking on a sample of training Source 1 entities against the FULL
-           training Source 2/3 corpus -> features -> LightGBM -> tune decision
-           thresholds for macro F_0.5 on held-out entities -> save model.
-  predict: blocking for every Source 1 entity -> features -> model ->
-           matching_results.tsv + candidate_pairs.tsv.
+           training Source 2/3 corpus -> features -> stage-1 LightGBM (with
+           out-of-fold predictions) -> stage-2 LightGBM on group-context
+           features -> choose the decision rule maximizing macro F_0.5 on a
+           tuning split -> report on an untouched split -> save models.
+  predict: blocking for every Source 1 entity -> features -> stage 1 ->
+           stage 2 -> decision rule -> matching_results.tsv + candidate_pairs.tsv.
 """
 import csv
+import gc
 import json
 import time
 import zlib
@@ -18,8 +21,8 @@ import numpy as np
 import pandas as pd
 
 from blocking import CandidateGenerator
-from features import FEATURE_COLUMNS, compute_features
-from model import decide, macro_f05, top_candidate_mask, train_model, tune_thresholds
+from features import FEATURE_COLUMNS, STAGE2_COLUMNS, add_group_features, compute_features
+from model import apply_decision, macro_f05, train_model, tune_expected_f, tune_thresholds
 from text import load_source, prepare_records
 
 PKG_DIR = Path(__file__).resolve().parents[1]
@@ -27,6 +30,7 @@ ROOT_DIR = PKG_DIR.parents[1]
 DEFAULT_DATA_DIR = ROOT_DIR / "dataset"
 DEFAULT_OUTPUT_DIR = ROOT_DIR / "output"
 DEFAULT_MODEL_DIR = PKG_DIR / "models"
+ARTIFACT_DIR = ROOT_DIR / "artifacts"
 
 BLOCKING = {"top_k": 30, "df_cap": 1000}
 FEATURE_CHUNK_PAIRS = 3_000_000
@@ -131,55 +135,98 @@ def train(data_dir=DEFAULT_DATA_DIR, model_dir=DEFAULT_MODEL_DIR, n_entities: in
     X = compute_features(pairs, s1, s23)
     _log(f"Features for {len(X):,} pairs in {time.time() - t0:.0f}s")
 
-    # Entity-level split: 80% fit / 10% early stopping + threshold tuning /
-    # 10% report (never used for any fitting decision)
+    # Entity-level split: 80% fit / 10% tune (early stopping + decision rule) /
+    # 10% report (never used for any fitting or selection decision).
+    # Within "fit", two folds give out-of-fold stage-1 probabilities, so stage 2
+    # is trained on probabilities of the same quality it will see at inference.
     rng = np.random.default_rng(seed)
     role = rng.choice(np.array([0, 1, 2], dtype=np.int8), size=len(s1), p=[0.8, 0.1, 0.1])
-    pair_role = role[pairs["s1_row"].to_numpy()]
-
+    fold = rng.integers(0, 2, size=len(s1))
+    rows = pairs["s1_row"].to_numpy()
+    pair_role, pair_fold = role[rows], fold[rows]
     fit, tune = pair_role == 0, pair_role == 1
-    _log("Training LightGBM...")
+
     t0 = time.time()
-    booster = train_model(X[fit], label[fit], X[tune], label[tune])
-    _log(f"Trained {booster.best_iteration} rounds in {time.time() - t0:.0f}s")
+    Xs1 = X.to_numpy(np.float32)
+    p1 = np.zeros(len(pairs), dtype=np.float32)
+    for k in (0, 1):
+        tr, ho = fit & (pair_fold != k), fit & (pair_fold == k)
+        m = train_model(Xs1[tr], label[tr], Xs1[tune], label[tune])
+        p1[ho] = m.predict(Xs1[ho])
+        _log(f"Stage 1 fold {k}: {m.best_iteration} rounds")
+    m1 = train_model(Xs1[fit], label[fit], Xs1[tune], label[tune])
+    p1[~fit] = m1.predict(Xs1[~fit])
+    _log(f"Stage 1 full: {m1.best_iteration} rounds ({time.time() - t0:.0f}s total)")
+    del Xs1
+    gc.collect()
 
-    prob = booster.predict(X, num_iteration=booster.best_iteration).astype(np.float32)
+    t0 = time.time()
+    Xs2 = add_group_features(X, pairs, p1, s23).to_numpy(np.float32)
+    del X
+    gc.collect()
+    m2 = train_model(Xs2[fit], label[fit], Xs2[tune], label[tune])
+    p2 = np.zeros(len(pairs), dtype=np.float32)
+    p2[~fit] = m2.predict(Xs2[~fit])
+    _log(f"Stage 2: {m2.best_iteration} rounds in {time.time() - t0:.0f}s")
+    del Xs2
+    gc.collect()
 
-    def entity_view(r):
+    def entity_view(r, prob):
         ent = np.flatnonzero(role == r)
         code = np.full(len(s1), -1, dtype=np.int64)
         code[ent] = np.arange(len(ent))
         m = pair_role == r
-        return code[pairs["s1_row"].to_numpy()[m]], prob[m], label[m], n_true[ent]
+        return code[rows[m]], prob[m], label[m], n_true[ent]
 
-    e1, p1, l1, t1 = entity_view(1)
-    (t_all, t_top), tune_score = tune_thresholds(e1, p1, l1, t1)
-    e2, p2, l2, t2 = entity_view(2)
-    report_score = macro_f05(e2, decide(p2, top_candidate_mask(e2, p2), t_all, t_top), l2, t2)
-    naive_score = macro_f05(e2, p2 >= 0.5, l2, t2)
-    _log(f"Thresholds t_all={t_all} t_top={t_top} | macro F0.5 tune={tune_score:.4f} "
-         f"report={report_score:.4f} (p>=0.5 only: {naive_score:.4f})")
+    # Every (stage, rule) is tuned on the tune split; the report split only reports.
+    candidates = []
+    for stage, prob in (("stage1", p1), ("stage2", p2)):
+        e1, q1, l1, t1 = entity_view(1, prob)
+        e2, q2, l2, t2 = entity_view(2, prob)
+        (t_all, t_top), s_thr = tune_thresholds(e1, q1, l1, t1)
+        (c, s), s_ef = tune_expected_f(e1, q1, l1, t1)
+        for rule, tune_score in (({"type": "threshold", "t_all": t_all, "t_top": t_top}, s_thr),
+                                 ({"type": "expected_f", "c_missing": c, "s_empty": s}, s_ef)):
+            report = macro_f05(e2, apply_decision(rule, e2, q2), l2, t2)
+            candidates.append({"stage": stage, "rule": rule, "tune": round(tune_score, 4),
+                               "report": round(report, 4)})
+            _log(f"  {stage} {rule} -> tune {tune_score:.4f} report {report:.4f}")
+    chosen = max(candidates, key=lambda d: d["tune"])
+    _log(f"Chosen: {chosen}")
 
-    importance = dict(zip(FEATURE_COLUMNS, booster.feature_importance("gain").round(1).tolist()))
+    ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+    keep = ~fit
+    c_keep = pairs["c_row"].to_numpy()[keep]
+    np.savez(ARTIFACT_DIR / "train_heldout_scores.npz", s1_row=rows[keep], c_row=c_keep,
+             role=pair_role[keep], p1=p1[keep], p2=p2[keep], label=label[keep],
+             entity_role=role, n_true=n_true, s1_ids=s1["entity_id"].to_numpy().astype(str),
+             c_ids=s23["entity_id"].to_numpy()[c_keep].astype(str))
+
     config = {
         "blocking": BLOCKING,
-        "features": FEATURE_COLUMNS,
-        "thresholds": {"t_all": t_all, "t_top": t_top},
-        "best_iteration": booster.best_iteration,
+        "stage1_features": FEATURE_COLUMNS,
+        "stage2_features": STAGE2_COLUMNS,
+        "use_stage2": chosen["stage"] == "stage2",
+        "decision": chosen["rule"],
         "metrics": {
             "blocking": blocking_stats,
-            "macro_f05_tune_split": round(tune_score, 4),
-            "macro_f05_report_split": round(report_score, 4),
-            "macro_f05_report_split_p05_only": round(naive_score, 4),
+            "selection": candidates,
+            "chosen": chosen,
             "singleton_rate": float((n_true == 0).mean()),
         },
-        "feature_importance_gain": importance,
+        "stage1_rounds": m1.best_iteration,
+        "stage2_rounds": m2.best_iteration,
+        "feature_importance_gain": {
+            "stage1": dict(zip(FEATURE_COLUMNS, m1.feature_importance("gain").round(1).tolist())),
+            "stage2": dict(zip(STAGE2_COLUMNS, m2.feature_importance("gain").round(1).tolist())),
+        },
         "n_train_entities": int(len(s1)),
         "seed": seed,
     }
-    booster.save_model(str(model_dir / "model.txt"), num_iteration=booster.best_iteration)
+    m1.save_model(str(model_dir / "model_stage1.txt"), num_iteration=m1.best_iteration)
+    m2.save_model(str(model_dir / "model_stage2.txt"), num_iteration=m2.best_iteration)
     (model_dir / "config.json").write_text(json.dumps(config, indent=2))
-    _log(f"Saved model to {model_dir}")
+    _log(f"Saved models to {model_dir}")
     return config
 
 
@@ -201,8 +248,8 @@ def predict(data_dir=DEFAULT_DATA_DIR, model_dir=DEFAULT_MODEL_DIR, output_dir=D
     output_dir.mkdir(parents=True, exist_ok=True)
 
     config = json.loads((model_dir / "config.json").read_text())
-    booster = lgb.Booster(model_file=str(model_dir / "model.txt"))
-    t_all, t_top = config["thresholds"]["t_all"], config["thresholds"]["t_top"]
+    m1 = lgb.Booster(model_file=str(model_dir / "model_stage1.txt"))
+    m2 = lgb.Booster(model_file=str(model_dir / "model_stage2.txt")) if config["use_stage2"] else None
 
     _log(f"Loading {split} data...")
     s23 = load_corpus(split_dir, split)
@@ -222,14 +269,26 @@ def predict(data_dir=DEFAULT_DATA_DIR, model_dir=DEFAULT_MODEL_DIR, output_dir=D
     _log("Scoring candidates...")
     t0 = time.time()
     rows = pairs["s1_row"].to_numpy()
-    prob = np.empty(len(pairs), dtype=np.float32)
+    p1 = np.empty(len(pairs), dtype=np.float32)
+    p2 = np.full(len(pairs), np.nan, dtype=np.float32)
     for a, b in _entity_chunks(rows, FEATURE_CHUNK_PAIRS):
-        X = compute_features(pairs.iloc[a:b], s1, s23)
-        prob[a:b] = booster.predict(X[config["features"]])
+        chunk = pairs.iloc[a:b]
+        X = compute_features(chunk, s1, s23)
+        p1[a:b] = m1.predict(X[config["stage1_features"]].to_numpy(np.float32))
+        if m2 is not None:
+            X2 = add_group_features(X, chunk, p1[a:b], s23)
+            p2[a:b] = m2.predict(X2[config["stage2_features"]].to_numpy(np.float32))
+        del X
         _log(f"  scored {b:,}/{len(pairs):,} pairs")
     _log(f"  done in {time.time() - t0:.0f}s")
 
-    matched = decide(prob, top_candidate_mask(rows, prob), t_all, t_top)
+    prob = p2 if m2 is not None else p1
+    matched = apply_decision(config["decision"], rows, prob)
+
+    # Saved so a different decision rule can be applied without re-scoring.
+    ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+    np.savez(ARTIFACT_DIR / f"{split}{'_holdout' if holdout_only else ''}_scores.npz",
+             s1_row=rows, c_row=pairs["c_row"].to_numpy(), p1=p1, p2=p2)
 
     s1_ids = s1["entity_id"].to_numpy()
     c_ids = s23["entity_id"].to_numpy()[pairs["c_row"].to_numpy()]

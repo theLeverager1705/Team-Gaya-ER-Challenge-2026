@@ -3,7 +3,7 @@
     "top_k": 30,
     "df_cap": 1000
   },
-  "features": [
+  "stage1_features": [
     "blk_score",
     "blk_name",
     "blk_addr",
@@ -31,52 +31,186 @@
     "c_name_non_ascii",
     "c_is_s3"
   ],
-  "thresholds": {
-    "t_all": 0.65,
-    "t_top": 0.64
+  "stage2_features": [
+    "blk_score",
+    "blk_name",
+    "blk_addr",
+    "blk_rank",
+    "n_cands",
+    "blk_score_gap",
+    "blk_score_rel",
+    "name_ratio",
+    "name_token_set",
+    "name_token_sort",
+    "name_partial",
+    "name_jw",
+    "name_token_set_gap",
+    "name_either_empty",
+    "addr_ratio",
+    "addr_token_set",
+    "addr_token_sort",
+    "addr_token_set_gap",
+    "num_token_set",
+    "first_num_eq",
+    "first_num_missing",
+    "q_name_ntok",
+    "c_name_ntok",
+    "q_name_non_ascii",
+    "c_name_non_ascii",
+    "c_is_s3",
+    "p1",
+    "p1_rank",
+    "p1_gap",
+    "p1_max_other",
+    "p1_sum_other",
+    "n_p1_05",
+    "same_src_p1_sum_other",
+    "ref_p1",
+    "ref_same_src",
+    "ref_name_token_set",
+    "ref_addr_token_set",
+    "ref_num_token_set"
+  ],
+  "use_stage2": true,
+  "decision": {
+    "type": "threshold",
+    "t_all": 0.725,
+    "t_top": 0.56
   },
-  "best_iteration": 763,
   "metrics": {
     "blocking": {
-      "entities": 200000,
-      "candidate_pairs": 5991659,
-      "pairs_per_entity": 29.958295,
-      "pair_recall": 0.9143834826295358,
-      "seconds": 206.3
+      "entities": 300000,
+      "candidate_pairs": 8987535,
+      "pairs_per_entity": 29.95845,
+      "pair_recall": 0.9142244611509547,
+      "seconds": 425.7
     },
-    "macro_f05_tune_split": 0.9141,
-    "macro_f05_report_split": 0.9165,
-    "macro_f05_report_split_p05_only": 0.9133,
-    "singleton_rate": 0.05557
+    "selection": [
+      {
+        "stage": "stage1",
+        "rule": {
+          "type": "threshold",
+          "t_all": 0.675,
+          "t_top": 0.64
+        },
+        "tune": 0.9164,
+        "report": 0.916
+      },
+      {
+        "stage": "stage1",
+        "rule": {
+          "type": "expected_f",
+          "c_missing": 0.8,
+          "s_empty": 1.0
+        },
+        "tune": 0.9166,
+        "report": 0.9171
+      },
+      {
+        "stage": "stage2",
+        "rule": {
+          "type": "threshold",
+          "t_all": 0.725,
+          "t_top": 0.56
+        },
+        "tune": 0.9269,
+        "report": 0.9264
+      },
+      {
+        "stage": "stage2",
+        "rule": {
+          "type": "expected_f",
+          "c_missing": 0.0,
+          "s_empty": 0.9
+        },
+        "tune": 0.9267,
+        "report": 0.9265
+      }
+    ],
+    "chosen": {
+      "stage": "stage2",
+      "rule": {
+        "type": "threshold",
+        "t_all": 0.725,
+        "t_top": 0.56
+      },
+      "tune": 0.9269,
+      "report": 0.9264
+    },
+    "singleton_rate": 0.05552
   },
+  "stage1_rounds": 1067,
+  "stage2_rounds": 571,
   "feature_importance_gain": {
-    "blk_score": 68818.8,
-    "blk_name": 54711.2,
-    "blk_addr": 59709.9,
-    "blk_rank": 6212098.5,
-    "n_cands": 197.6,
-    "blk_score_gap": 62227.8,
-    "blk_score_rel": 689403.3,
-    "name_ratio": 238711.5,
-    "name_token_set": 277216.7,
-    "name_token_sort": 336427.5,
-    "name_partial": 419903.7,
-    "name_jw": 531388.1,
-    "name_token_set_gap": 28600.5,
-    "name_either_empty": 212.7,
-    "addr_ratio": 157938.3,
-    "addr_token_set": 836203.9,
-    "addr_token_sort": 77774.6,
-    "addr_token_set_gap": 151758.9,
-    "num_token_set": 1926255.3,
-    "first_num_eq": 152927.3,
-    "first_num_missing": 372428.9,
-    "q_name_ntok": 34423.5,
-    "c_name_ntok": 164607.0,
-    "q_name_non_ascii": 0.0,
-    "c_name_non_ascii": 186655.8,
-    "c_is_s3": 30845.7
+    "stage1": {
+      "blk_score": 102772.5,
+      "blk_name": 75833.2,
+      "blk_addr": 88216.8,
+      "blk_rank": 9314186.2,
+      "n_cands": 266.2,
+      "blk_score_gap": 92910.0,
+      "blk_score_rel": 1031301.1,
+      "name_ratio": 354895.0,
+      "name_token_set": 420609.7,
+      "name_token_sort": 496953.5,
+      "name_partial": 636292.1,
+      "name_jw": 795607.5,
+      "name_token_set_gap": 44174.4,
+      "name_either_empty": 204.4,
+      "addr_ratio": 237315.9,
+      "addr_token_set": 1256399.9,
+      "addr_token_sort": 115533.7,
+      "addr_token_set_gap": 229578.0,
+      "num_token_set": 2901576.1,
+      "first_num_eq": 229580.8,
+      "first_num_missing": 558295.2,
+      "q_name_ntok": 52398.0,
+      "c_name_ntok": 250808.8,
+      "q_name_non_ascii": 0.0,
+      "c_name_non_ascii": 274632.6,
+      "c_is_s3": 47157.0
+    },
+    "stage2": {
+      "blk_score": 21516.9,
+      "blk_name": 16416.9,
+      "blk_addr": 17112.0,
+      "blk_rank": 30810.8,
+      "n_cands": 132.4,
+      "blk_score_gap": 22314.3,
+      "blk_score_rel": 17474.8,
+      "name_ratio": 19229.6,
+      "name_token_set": 11731.5,
+      "name_token_sort": 96684.9,
+      "name_partial": 142600.3,
+      "name_jw": 22329.6,
+      "name_token_set_gap": 11409.4,
+      "name_either_empty": 9.2,
+      "addr_ratio": 22785.8,
+      "addr_token_set": 28167.8,
+      "addr_token_sort": 21137.7,
+      "addr_token_set_gap": 17106.7,
+      "num_token_set": 678653.2,
+      "first_num_eq": 7087.9,
+      "first_num_missing": 5050.5,
+      "q_name_ntok": 3625.2,
+      "c_name_ntok": 9148.2,
+      "q_name_non_ascii": 0.0,
+      "c_name_non_ascii": 7773.2,
+      "c_is_s3": 5397.9,
+      "p1": 13237425.4,
+      "p1_rank": 3771384.6,
+      "p1_gap": 344588.5,
+      "p1_max_other": 61199.3,
+      "p1_sum_other": 68383.1,
+      "n_p1_05": 737311.9,
+      "same_src_p1_sum_other": 97204.4,
+      "ref_p1": 6388.7,
+      "ref_same_src": 15356.5,
+      "ref_name_token_set": 31103.1,
+      "ref_addr_token_set": 37734.6,
+      "ref_num_token_set": 51230.0
+    }
   },
-  "n_train_entities": 200000,
+  "n_train_entities": 300000,
   "seed": 42
 }

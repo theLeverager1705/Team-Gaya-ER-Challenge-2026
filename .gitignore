@@ -17,3 +17,5 @@ __pycache__/
 *.parquet
 *.pkl
 *.npz
+output_v2/
+artifacts/
