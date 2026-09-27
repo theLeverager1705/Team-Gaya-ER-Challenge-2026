@@ -1,0 +1,82 @@
+{
+  "blocking": {
+    "top_k": 30,
+    "df_cap": 1000
+  },
+  "features": [
+    "blk_score",
+    "blk_name",
+    "blk_addr",
+    "blk_rank",
+    "n_cands",
+    "blk_score_gap",
+    "blk_score_rel",
+    "name_ratio",
+    "name_token_set",
+    "name_token_sort",
+    "name_partial",
+    "name_jw",
+    "name_token_set_gap",
+    "name_either_empty",
+    "addr_ratio",
+    "addr_token_set",
+    "addr_token_sort",
+    "addr_token_set_gap",
+    "num_token_set",
+    "first_num_eq",
+    "first_num_missing",
+    "q_name_ntok",
+    "c_name_ntok",
+    "q_name_non_ascii",
+    "c_name_non_ascii",
+    "c_is_s3"
+  ],
+  "thresholds": {
+    "t_all": 0.65,
+    "t_top": 0.64
+  },
+  "best_iteration": 763,
+  "metrics": {
+    "blocking": {
+      "entities": 200000,
+      "candidate_pairs": 5991659,
+      "pairs_per_entity": 29.958295,
+      "pair_recall": 0.9143834826295358,
+      "seconds": 206.3
+    },
+    "macro_f05_tune_split": 0.9141,
+    "macro_f05_report_split": 0.9165,
+    "macro_f05_report_split_p05_only": 0.9133,
+    "singleton_rate": 0.05557
+  },
+  "feature_importance_gain": {
+    "blk_score": 68818.8,
+    "blk_name": 54711.2,
+    "blk_addr": 59709.9,
+    "blk_rank": 6212098.5,
+    "n_cands": 197.6,
+    "blk_score_gap": 62227.8,
+    "blk_score_rel": 689403.3,
+    "name_ratio": 238711.5,
+    "name_token_set": 277216.7,
+    "name_token_sort": 336427.5,
+    "name_partial": 419903.7,
+    "name_jw": 531388.1,
+    "name_token_set_gap": 28600.5,
+    "name_either_empty": 212.7,
+    "addr_ratio": 157938.3,
+    "addr_token_set": 836203.9,
+    "addr_token_sort": 77774.6,
+    "addr_token_set_gap": 151758.9,
+    "num_token_set": 1926255.3,
+    "first_num_eq": 152927.3,
+    "first_num_missing": 372428.9,
+    "q_name_ntok": 34423.5,
+    "c_name_ntok": 164607.0,
+    "q_name_non_ascii": 0.0,
+    "c_name_non_ascii": 186655.8,
+    "c_is_s3": 30845.7
+  },
+  "n_train_entities": 200000,
+  "seed": 42
+}
