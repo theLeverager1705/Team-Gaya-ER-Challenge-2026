@@ -231,12 +231,14 @@ def train(data_dir=DEFAULT_DATA_DIR, model_dir=DEFAULT_MODEL_DIR, n_entities: in
 
 
 def _write_id_lists(path, s1_ids, rows, cand_ids, column):
-    """Write one row per Source 1 entity (empty list when it has no ids), tab-separated, unquoted."""
+    """Write one row per Source 1 entity (empty list when it has no ids), tab-separated, unquoted.
+    Line endings are forced to LF: pandas defaults to CRLF on Windows, and the official
+    validator/scorer strip only '\\n', which would leave '\\r' glued to the last id of every row."""
     lists = pd.Series(cand_ids).groupby(rows, sort=False).agg(",".join)
     out = np.full(len(s1_ids), "", dtype=object)
     out[lists.index.to_numpy()] = lists.to_numpy()
     pd.DataFrame({"source1_entity_id": s1_ids, column: out}).to_csv(
-        path, sep="\t", index=False, quoting=csv.QUOTE_NONE, encoding="utf-8")
+        path, sep="\t", index=False, quoting=csv.QUOTE_NONE, encoding="utf-8", lineterminator="\n")
 
 
 def predict(data_dir=DEFAULT_DATA_DIR, model_dir=DEFAULT_MODEL_DIR, output_dir=DEFAULT_OUTPUT_DIR,
