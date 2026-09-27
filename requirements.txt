@@ -1,0 +1,7 @@
+# Pinned for reproducibility. Re-run `pip freeze` on the final SageMaker space before submitting.
+# All licenses are permissive: pandas/numpy/scikit-learn (BSD-3), lightgbm (MIT), rapidfuzz (MIT).
+pandas==2.2.3
+numpy==1.26.4
+scikit-learn==1.5.2
+lightgbm==4.5.0
+rapidfuzz==3.10.1

@@ -1,6 +1,19 @@
+# Data and large artifacts (keep locally, not in GitHub)
 dataset/
+student_resource/
+artifacts/
 output/
 submissions/*.tsv
 submissions/*.zip
+
+# Python
 __pycache__/
 *.pyc
+.ipynb_checkpoints/
+.venv/
+
+# Artifacts
+*.zip
+*.parquet
+*.pkl
+*.npz
