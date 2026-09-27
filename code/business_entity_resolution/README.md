@@ -59,7 +59,7 @@ python src/main.py score --matching ../../output/holdout/matching_results.tsv \
 ```
 
 Runtime on the machine above (other applications holding ~18 GB of RAM): training 31 min;
-test prediction TEST_RUNTIME.
+test prediction 58 min (blocking 12 min, scoring 39 min; 51.9M candidate pairs).
 All randomness is seeded; LightGBM runs with `deterministic=True`; key hashing is murmur3.
 
 ## Source files (`src/`)
